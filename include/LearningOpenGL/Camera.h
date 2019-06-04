@@ -26,7 +26,8 @@ public:
 	float Pitch;
     float Speed;
     float MoveSpeed;
-    Camera(glm::vec3 position = glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f), float yaw = 0.0f, float pitch = 0.0f,float speed = 0.01f,float movespeed = 0.001f) : Position(position), SRC_Front(glm::vec3(0.0f, 0.0f, -1.0f)), Yaw(yaw), Pitch(pitch), WorldUp(up),Speed(speed),MoveSpeed(movespeed)
+    float Zoom;
+    Camera(glm::vec3 position = glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f), float yaw = 0.0f, float pitch = 0.0f,float speed = 0.01f,float movespeed = 0.001f,float zoom = 45.0f) : Position(position), SRC_Front(glm::vec3(0.0f, 0.0f, -1.0f)), Yaw(yaw), Pitch(pitch), WorldUp(up),Speed(speed),MoveSpeed(movespeed),Zoom(zoom)
 	{
 		updateCamera();
 	}
@@ -63,6 +64,16 @@ public:
         else if (Pitch <= glm::radians(-89.0f))
             Pitch = glm::radians(-89.0f);
         updateCamera();
+    }
+    void ProcessMouseScroll(int offsetY)
+    {
+        float yoffset = 1.0f * offsetY;
+        if (Zoom >= 1.0f && Zoom <= 45.0f)
+            Zoom -= yoffset;
+        if (Zoom <= 1.0f)
+            Zoom = 1.0f;
+        if (Zoom >= 45.0f)
+            Zoom = 45.0f;
     }
 
 private:
