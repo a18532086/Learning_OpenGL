@@ -39,13 +39,39 @@ void main()
 
 static const char *objfs = R"(#version 330 core
 
-struct Light {
+struct DirLight {
+    vec3 direction;
+
+    vec3 ambient;
+    vec3 diffuse;
+    vec3 specular;
+}; 
+
+struct PointLight {
     vec3 position;
+
+    float constant;
+    float linear;
+    float quadratic;
 
     vec3 ambient;
     vec3 diffuse;
     vec3 specular;
 };
+struct SpotLight {
+    vec3 position;
+	vec3 direction;
+
+    float constant;
+    float linear;
+    float quadratic;
+	float cutOff;
+	float outerCutOff;
+
+    vec3 ambient;
+    vec3 diffuse;
+    vec3 specular;
+}; 
 
 struct Material {
     sampler2D diffuse;
@@ -57,29 +83,97 @@ in vec3 Normal;
 in vec3 FragPos;
 in vec2 TexCoords;
 
+const int MAX_POINTLIGHT = 4;
+
 uniform vec3 viewPos;
-uniform Light light;
 uniform Material material;
+uniform DirLight dirLight;
+uniform PointLight pointLights[MAX_POINTLIGHT];
+uniform SpotLight spotLight;
 out vec4 FragColor;
 
-void main()
+vec3 CalcDirlight(DirLight light,vec3 normal,vec3 viewDir)
 {
-	// ambient
-    vec3 ambient = light.ambient * texture(material.diffuse, TexCoords).rgb;
-  	
-    // diffuse 
-    vec3 norm = normalize(Normal);
-    vec3 lightDir = normalize(light.position - FragPos);
-    float diff = max(dot(norm, lightDir), 0.0);
-    vec3 diffuse = light.diffuse * diff * texture(material.diffuse, TexCoords).rgb;  
-    
-    // specular
-    vec3 viewDir = normalize(viewPos - FragPos);
-    vec3 reflectDir = reflect(-lightDir, norm);  
-    float spec = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess);
-    vec3 specular = light.specular * spec * texture(material.specular, TexCoords).rgb;  
-        
-    vec3 result = ambient + diffuse + specular;
+	vec3 lightDir = normalize(-light.direction);
+	//漫反射
+	float diff = max(dot(lightDir,normal),0.0f);
+	//镜面反射
+	vec3 reflectDir = reflect(-lightDir,normal);
+	float spec = pow(max(dot(reflectDir,viewDir),0.0f),material.shininess);
+	//计算
+	vec3 ambient = light.ambient * texture(material.diffuse,TexCoords).rgb;
+	vec3 diffuse = light.diffuse * diff * texture(material.diffuse,TexCoords).rgb;
+	vec3 specular = light.specular * spec * texture(material.specular,TexCoords).rgb; 
+
+	return ambient + diffuse + specular;
+}
+
+vec3 CalcPointlight(PointLight light,vec3 normal,vec3 FragPos,vec3 viewDir)
+{
+	vec3 lightDir = normalize(light.position - FragPos);
+	//漫反射
+	float diff = max(dot(lightDir,normal),0.0f);
+	//镜面反射
+	vec3 reflectDir = reflect(-lightDir,normal);
+	float spec = pow(max(dot(reflectDir,viewDir),0.0f),material.shininess);
+	//计算
+	vec3 ambient = light.ambient * texture(material.diffuse,TexCoords).rgb;
+	vec3 diffuse = light.diffuse * diff * texture(material.diffuse,TexCoords).rgb;
+	vec3 specular = light.specular * spec * texture(material.specular,TexCoords).rgb; 
+	//光衰减
+	float distance = length(light.position - FragPos);
+	float attenuation = 1.0 / (light.constant + light.linear * distance + light.quadratic * (distance * distance));
+
+	ambient *= attenuation;
+	diffuse *= attenuation;
+	specular *= attenuation;
+
+	return ambient + diffuse + specular;
+}
+vec3 CalcSpotlight(SpotLight light,vec3 normal,vec3 FragPos,vec3 viewDir)
+{
+	vec3 lightDir = normalize(light.position - FragPos);
+	//漫反射
+	float diff = max(dot(lightDir,normal),0.0f);
+	//镜面反射
+	vec3 reflectDir = reflect(-lightDir,normal);
+	float spec = pow(max(dot(reflectDir,viewDir),0.0f),material.shininess);
+	//计算
+	vec3 ambient = light.ambient * texture(material.diffuse,TexCoords).rgb;
+	vec3 diffuse = light.diffuse * diff * texture(material.diffuse,TexCoords).rgb;
+	vec3 specular = light.specular * spec * texture(material.specular,TexCoords).rgb; 
+	//光衰减
+	float distance = length(light.position - FragPos);
+	float attenuation = 1.0 / (light.constant + light.linear * distance + light.quadratic * (distance * distance));
+
+	ambient *= attenuation;
+	diffuse *= attenuation;
+	specular *= attenuation;
+
+	//聚光
+	float theta = dot(-lightDir,normalize(light.direction));
+	float intensity = clamp ((theta - light.outerCutOff) / (light.cutOff - light.outerCutOff),0.0,1.0);
+	diffuse *= intensity;
+	specular *= intensity;
+
+	return ambient + diffuse + specular;
+}
+void main()
+{ 	
+	vec3 viewDir = normalize(viewPos - FragPos);
+	vec3 norm = normalize(Normal);
+	vec3 result;
+
+	//定向光
+	result += CalcDirlight(dirLight,norm,viewDir);
+
+	//点光源
+	for (int i = 0;i < MAX_POINTLIGHT;i++)
+	result += CalcPointlight(pointLights[i],norm,FragPos,viewDir);
+
+	//聚光
+	result += CalcSpotlight(spotLight,norm,FragPos,viewDir);
+
     FragColor = vec4(result, 1.0);
 })";
 
@@ -219,6 +313,26 @@ int main(int argc,char* argv[])
 	SDL_Event event;
 	bool is_open = true;
 	glm::vec3 SRC_lightPos(1.2f, 1.0f, 2.0f);
+	glm::vec3 specular(1.0f, 1.0f, 1.0f);
+	glm::vec3 diffuse = 0.5f * specular;
+	glm::vec3 ambient = 0.5f * diffuse;
+	glm::vec3 cubePositions[] = {
+		glm::vec3(0.0f, 0.0f, 0.0f),
+		glm::vec3(2.0f, 5.0f, -15.0f),
+		glm::vec3(-1.5f, -2.2f, -2.5f),
+		glm::vec3(-3.8f, -2.0f, -12.3f),
+		glm::vec3(2.4f, -0.4f, -3.5f),
+		glm::vec3(-1.7f, 3.0f, -7.5f),
+		glm::vec3(1.3f, -2.0f, -2.5f),
+		glm::vec3(1.5f, 2.0f, -2.5f),
+		glm::vec3(1.5f, 0.2f, -1.5f),
+		glm::vec3(-1.3f, 1.0f, -1.5f)};
+	glm::vec3 pointLightPositions[] = {
+        glm::vec3( 0.7f,  0.2f,  2.0f),
+        glm::vec3( 2.3f, -3.3f, -4.0f),
+        glm::vec3(-4.0f,  2.0f, -12.0f),
+        glm::vec3( 0.0f,  0.0f, -3.0f)
+    };
 	InitTexture("container2.png", 0);
 	InitTexture("container2_specular.png", 1);
 
@@ -227,12 +341,51 @@ int main(int argc,char* argv[])
 	objShader.setInt("material.diffuse",  0);
 	objShader.setInt("material.specular", 1);
 	objShader.setFloat("material.shininess", 64.0f);
-	objShader.setVec3("light.ambient",  glm::vec3(0.1f, 0.1f, 0.1f));
-	objShader.setVec3("light.diffuse",  glm::vec3(0.5f, 0.5f, 0.5f)); // 将光照调暗了一些以搭配场景
-	objShader.setVec3("light.specular", glm::vec3(1.0f, 1.0f, 1.0f));
-
-
-
+	// directional light
+	objShader.setVec3("dirLight.direction", glm::vec3(-0.2f, -1.0f, -0.3f));
+	objShader.setVec3("dirLight.ambient", glm::vec3(0.05f, 0.05f, 0.05f));
+	objShader.setVec3("dirLight.diffuse", glm::vec3(0.4f, 0.4f, 0.4f));
+	objShader.setVec3("dirLight.specular", glm::vec3(0.5f, 0.5f, 0.5f));
+	// point light 1
+	objShader.setVec3("pointLights[0].position", pointLightPositions[0]);
+	objShader.setVec3("pointLights[0].ambient", glm::vec3(0.05f, 0.05f, 0.05f));
+	objShader.setVec3("pointLights[0].diffuse", glm::vec3(0.8f, 0.8f, 0.8f));
+	objShader.setVec3("pointLights[0].specular", glm::vec3(1.0f, 1.0f, 1.0f));
+	objShader.setFloat("pointLights[0].constant", 1.0f);
+	objShader.setFloat("pointLights[0].linear", 0.09);
+	objShader.setFloat("pointLights[0].quadratic", 0.032);
+	// point light 2
+	objShader.setVec3("pointLights[1].position", pointLightPositions[1]);
+	objShader.setVec3("pointLights[1].ambient", glm::vec3(0.05f, 0.05f, 0.05f));
+	objShader.setVec3("pointLights[1].diffuse", glm::vec3(0.8f, 0.8f, 0.8f));
+	objShader.setVec3("pointLights[1].specular", glm::vec3(1.0f, 1.0f, 1.0f));
+	objShader.setFloat("pointLights[1].constant", 1.0f);
+	objShader.setFloat("pointLights[1].linear", 0.09);
+	objShader.setFloat("pointLights[1].quadratic", 0.032);
+	// point light 3
+	objShader.setVec3("pointLights[2].position", pointLightPositions[2]);
+	objShader.setVec3("pointLights[2].ambient", glm::vec3(0.05f, 0.05f, 0.05f));
+	objShader.setVec3("pointLights[2].diffuse", glm::vec3(0.8f, 0.8f, 0.8f));
+	objShader.setVec3("pointLights[2].specular", glm::vec3(1.0f, 1.0f, 1.0f));
+	objShader.setFloat("pointLights[2].constant", 1.0f);
+	objShader.setFloat("pointLights[2].linear", 0.09);
+	objShader.setFloat("pointLights[2].quadratic", 0.032);
+	// point light 4
+	objShader.setVec3("pointLights[3].position", pointLightPositions[3]);
+	objShader.setVec3("pointLights[3].ambient", glm::vec3(0.05f, 0.05f, 0.05f));
+	objShader.setVec3("pointLights[3].diffuse", glm::vec3(0.8f, 0.8f, 0.8f));
+	objShader.setVec3("pointLights[3].specular", glm::vec3(1.0f, 1.0f, 1.0f));
+	objShader.setFloat("pointLights[3].constant", 1.0f);
+	objShader.setFloat("pointLights[3].linear", 0.09);
+	objShader.setFloat("pointLights[3].quadratic", 0.032);
+	objShader.setVec3("spotLight.ambient", glm::vec3(0.0f, 0.0f, 0.0f));
+	objShader.setVec3("spotLight.diffuse", glm::vec3(1.0f, 1.0f, 1.0f));
+	objShader.setVec3("spotLight.specular", glm::vec3(1.0f, 1.0f, 1.0f));
+	objShader.setFloat("spotLight.constant", 1.0f);
+	objShader.setFloat("spotLight.linear", 0.09);
+	objShader.setFloat("spotLight.quadratic", 0.032);
+	objShader.setFloat("spotLight.cutOff", glm::cos(glm::radians(12.5f)));
+	objShader.setFloat("spotLight.outerCutOff", glm::cos(glm::radians(15.0f)));
 
 	while (is_open)
 	{
@@ -308,24 +461,39 @@ int main(int argc,char* argv[])
 		proj = glm::perspective(glm::radians(camera.Zoom), (float)GL_width / (float)GL_height, 0.1f, 100.0f);
 		glm::vec3 lightPos = glm::mat3(glm::rotate(glm::mat4(1.0f), glm::radians(0.1f*SDL_GetTicks()), glm::vec3(0.0f, 1.0f, 0.0f))) * SRC_lightPos;
 		objShader.setVec3("viewPos",camera.Position);
-		objShader.setVec3("light.position", lightPos);
+		objShader.setVec3("spotLight.position",camera.Position);
+		objShader.setVec3("spotLight.direction",camera.Front);
 		objShader.setMat4("model", model);
 		objShader.setMat4("proj", proj);
 		objShader.setMat4("view", view);
 
         glBindVertexArray(VAO);
-		glDrawArrays(GL_TRIANGLES, 0, 36);
+		for (unsigned int i = 0; i < 10; i++)
+		{
+			model = glm::mat4(1.0f);
+			model = glm::translate(model, cubePositions[i]);
+			float angle = 20.0f * i;
+			model = glm::rotate(model, glm::radians(angle), glm::vec3(1.0f, 0.3f, 0.5f));
+			objShader.setMat4("model", model);
+
+			glDrawArrays(GL_TRIANGLES, 0, 36);
+		}
 
 		lightShader.use();
-        model = glm::mat4(1.0f);
-        model = glm::translate(model, lightPos);
-        model = glm::scale(model, glm::vec3(0.2f));
 		
 		lightShader.setMat4("model", model);
         lightShader.setMat4("view", view);
         lightShader.setMat4("proj", proj);
         glBindVertexArray(lightVAO);
-		glDrawArrays(GL_TRIANGLES, 0, 36);
+		for (unsigned int i = 0; i < 4; i++)
+		{
+			model = glm::mat4(1.0f);
+			model = glm::translate(model, pointLightPositions[i]);
+			model = glm::scale(model, glm::vec3(0.1f));
+			lightShader.setMat4("model", model);
+
+			glDrawArrays(GL_TRIANGLES, 0, 36);
+		}
 
 
         unsigned int currentFrame = SDL_GetTicks();
